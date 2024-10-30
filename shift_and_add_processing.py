@@ -10,10 +10,11 @@ plt.rcParams.update({'figure.figsize': [12.0, 9.0], 'font.size': 24.0,
 
 data_dir = r"C:\Users\jamie\Desktop\SharpCap Captures\2024-08-27\Capture\16_08_57"
 save_dir = r"C:\Users\jamie\Pictures\astrophotos\processed"
+save_file = "Saturn171024.tiff"
 data_files = os.listdir(data_dir)
-reference_image = 22
-mode= "LAB" # LAB space seems to be the best because it completely seperates luminosity from colour.
-tracking_method= "circle" #"circle" #"crosscor" #"peak"
+reference_image = 0
+mode= "RGB" # LAB space seems to be the best because it completely seperates luminosity from colour.
+tracking_method= "peak" #"circle" #"crosscor" #"peak"
 interpolation= 1.0
 
 images = []
@@ -51,6 +52,7 @@ num_images, height, length, num_channels = images.shape
 match tracking_method:
     case "peak":
         peaks = [np.unravel_index(np.argmax(image), image.shape) for image in images[:,:,:,0]]
+        
     case "crosscor":
         peaks = []
         for image in images[:,:,:,0]:
@@ -83,6 +85,10 @@ match tracking_method:
             plt.show()
             
 y_enlargement, x_enlargement = np.max(peaks, axis= 0) -np.min(peaks, axis= 0)
+
+#y_enlargement = np.max(peaks[:,0]) -np.min(peaks[:,0])
+#x_enlargement = np.max(peaks[:,1]) -np.min(peaks[:,1])
+
 shifts = np.max(peaks, axis= 0) -peaks
 
 # %%
@@ -108,7 +114,5 @@ plt.show()
 
 # %%
 
-save_file = "Sun270824.tiff"
 save_path = os.path.join(save_dir, save_file)
-
 #img1.save(save_path)
