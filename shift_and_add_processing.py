@@ -8,14 +8,13 @@ plt.rcParams.update({'figure.figsize': [12.0, 9.0], 'font.size': 24.0,
                      'image.interpolation': 'none', 'figure.facecolor': 'none'})
 
 
-data_dir = r"C:\Users\jamie\Desktop\SharpCap Captures\2024-08-27\Capture\16_08_57"
-save_dir = r"C:\Users\jamie\Pictures\astrophotos\processed"
-save_file = "Saturn171024.tiff"
+data_dir = r"/home/jamie/Pictures/astrophotos/2026-03-19/jupiter/19h47m25s"
+save_dir = r"/home/jamie/Pictures/astrophotos/processed"
+save_file = "Jupiter190326.tiff"
 data_files = os.listdir(data_dir)
 reference_image = 0
-mode= "RGB" # LAB space seems to be the best because it completely seperates luminosity from colour.
-tracking_method= "peak" #"circle" #"crosscor" #"peak"
-interpolation= 1.0
+tracking_method= "circle" #"circle" #"crosscor" #"peak"
+interpolation= 2.0
 
 images = []
 for data_file in data_files:
@@ -27,14 +26,13 @@ for data_file in data_files:
     
     data_path = os.path.join(data_dir, data_file)
     img = Image.open(data_path)
-    img = img.convert(mode)
     
     array = np.array(img)
     images += [array]
 images = np.array(images)
 
 plt.figure()
-img0 = Image.fromarray(images[reference_image], mode= mode)
+img0 = Image.fromarray(images[reference_image])
 plt.imshow(img0)
 plt.show()
 
@@ -45,7 +43,7 @@ images = [cv2.resize(image, None, fx=interpolation, fy=interpolation, interpolat
           in enumerate(images)]
 images = np.array(images)
 
-num_images, height, length, num_channels = images.shape
+num_images, height, length, num_channels = images.shape # doesn't work for grayscale in which case it is only dim 3.
 
 # %%
 
@@ -78,11 +76,11 @@ match tracking_method:
             
             peaks = np.concatenate((peaks, [[round(y),round(x)]]), axis= 0)
             
-            fig, axs = plt.subplots()
-            axs.imshow(image, cmap= "Greys_r")
-            axs.plot(*contour[:,0,:].T, marker= ".", markersize= 16, color= "tab:red")
-            axs.plot(peaks[:,1], peaks[:,0], marker= "o", markersize= 16, markevery= [-1]) #this line should be approximately straight. If it isn't then you are likely to get ghosting
-            plt.show()
+            #fig, axs = plt.subplots()
+            #axs.imshow(image, cmap= "Greys_r")
+            #axs.plot(*contour[:,0,:].T, marker= ".", markersize= 16, color= "tab:red")
+            #axs.plot(peaks[:,1], peaks[:,0], marker= "o", markersize= 16, markevery= [-1]) #this line should be approximately straight. If it isn't then you are likely to get ghosting
+            #plt.show()
             
 y_enlargement, x_enlargement = np.max(peaks, axis= 0) -np.min(peaks, axis= 0)
 
@@ -108,11 +106,11 @@ processed *= (2**8 -1) / processed.max()
 
 processed = processed.astype(np.uint8)
 
-img1 = Image.fromarray(processed, mode= mode)
+img1 = Image.fromarray(processed)
 plt.imshow(img1)
 plt.show()
 
 # %%
 
 save_path = os.path.join(save_dir, save_file)
-#img1.save(save_path)
+img1.save(save_path)
