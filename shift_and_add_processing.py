@@ -14,7 +14,8 @@ save_file = "Jupiter190326.tiff"
 data_files = os.listdir(data_dir)
 reference_image = 0
 tracking_method= "circle" #"circle" #"crosscor" #"peak"
-interpolation= 2.0
+interpolation= 3.0
+deconvolution= 8.0
 
 images = []
 for data_file in data_files:
@@ -76,7 +77,7 @@ match tracking_method:
             
             peaks = np.concatenate((peaks, [[round(y),round(x)]]), axis= 0)
             
-            #fig, axs = plt.subplots()
+            #fig, axs = plt.subplots() # Ideally, I should be updating the figure instead of making new figures.
             #axs.imshow(image, cmap= "Greys_r")
             #axs.plot(*contour[:,0,:].T, marker= ".", markersize= 16, color= "tab:red")
             #axs.plot(peaks[:,1], peaks[:,0], marker= "o", markersize= 16, markevery= [-1]) #this line should be approximately straight. If it isn't then you are likely to get ghosting
@@ -100,7 +101,31 @@ for image, shift in zip(images, shifts):
 shift_and_added /= weights[:,:,None]
 shift_and_added[np.isnan(shift_and_added)] = 0.0
 
-processed = np.copy(shift_and_added)
+# %% DECOVOLUTION TO MAKE IT SHARPER
+
+softening = 1e-4
+
+xfreq = np.fft.fftfreq(length +x_enlargement, d= 1/(length +x_enlargement))
+yfreq = np.fft.fftfreq(height +y_enlargement, d= 1/(height +y_enlargement))
+xgrid, ygrid = np.meshgrid(xfreq, yfreq)
+
+def gaussian(x, y, sigma):
+    normalisation = 2*np.pi*sigma**2
+    exponent = -1/2 *(x**2 +y**2) *sigma**-2
+    return np.exp(exponent) /normalisation
+
+kernel = gaussian(xgrid, ygrid, sigma= deconvolution)
+kernel_FFT = np.fft.fft2(kernel, norm= "ortho")
+kernel_FFT = np.where(np.abs(kernel_FFT) <= softening, softening, kernel_FFT) # avoid div 0 errors
+kernel = np.fft.ifft2(kernel_FFT, norm= "ortho")
+shift_and_added_FFT = np.fft.fft2(shift_and_added, axes= (0, 1), norm= "ortho")
+deconvolved_FFT = shift_and_added_FFT / kernel_FFT[:,:,None] # not sure how to correctly normalise this.
+deconvolved = np.fft.ifft2(deconvolved_FFT, axes= (0, 1), norm= "ortho")
+deconvolved = np.real(deconvolved)
+
+# %% FORMATTING TO 8 BIT DEPTH
+
+processed = np.copy(deconvolved)
 if processed.min() <= 0.0: processed -= processed.min()
 processed *= (2**8 -1) / processed.max()
 
