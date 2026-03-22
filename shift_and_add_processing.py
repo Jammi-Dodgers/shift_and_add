@@ -1,6 +1,7 @@
 import cv2, os
 import numpy as np
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 from PIL import Image
 from scipy import signal as spsig, optimize as spopt
 plt.rcParams.update({'figure.figsize': [12.0, 9.0], 'font.size': 24.0,
@@ -18,7 +19,7 @@ interpolation= 3.0
 deconvolution= 8.0
 
 images = []
-for data_file in data_files:
+for data_file in data_files: # open all photos. High memory use.
     
     valid_file_extentions = ".png", ".tif"
     file_extention = data_file[data_file.rfind((".")):]
@@ -37,7 +38,7 @@ img0 = Image.fromarray(images[reference_image])
 plt.imshow(img0)
 plt.show()
 
-# %%
+# %% RESCALE IMAGES USING INTERPOLATION
 
 images = [cv2.resize(image, None, fx=interpolation, fy=interpolation, interpolation = cv2.INTER_CUBIC)
           for n, image
@@ -46,7 +47,7 @@ images = np.array(images)
 
 num_images, height, length, num_channels = images.shape # doesn't work for grayscale in which case it is only dim 3.
 
-# %%
+# %% FIND DRIFTS IN PHOTOS
 
 match tracking_method:
     case "peak":
@@ -84,13 +85,50 @@ match tracking_method:
             #plt.show()
             
 y_enlargement, x_enlargement = np.max(peaks, axis= 0) -np.min(peaks, axis= 0)
-
-#y_enlargement = np.max(peaks[:,0]) -np.min(peaks[:,0])
-#x_enlargement = np.max(peaks[:,1]) -np.min(peaks[:,1])
-
 shifts = np.max(peaks, axis= 0) -peaks
 
-# %%
+fig, axs = plt.subplots()
+axs.imshow(np.mean(images[reference_image], axis= 2), cmap= "Greys_r")
+axs.plot(peaks[:,1], peaks[:,0], linestyle= "none", marker= ".", markersize= 3) #this line should be approximately straight. If it isn't then you are likely to get ghosting
+axs.tick_params(left= True, bottom= True, labelleft= True, labelbottom= True)
+plt.show()
+
+# %% DECOVOLUTION TO MAKE IT SHARPER
+
+softening = 1e-4
+
+def gaussian(x, y, sigma): # gaussian as a first assumption. An airy disk is probably worth trying.
+    normalisation = 2*np.pi*sigma**2
+    exponent = -1/2 *(x**2 +y**2) *sigma**-2
+    return np.exp(exponent) /normalisation
+
+xfreq = np.fft.fftfreq(length, d= 1/length)
+yfreq = np.fft.fftfreq(height, d= 1/height)
+xgrid, ygrid = np.meshgrid(xfreq, yfreq)
+kernel = gaussian(xgrid, ygrid, sigma= deconvolution)
+kernel_FFT = np.fft.fft2(kernel, norm= "ortho")
+kernel_FFT = np.where(np.abs(kernel_FFT) <= softening, softening *np.exp(1j*np.angle(kernel_FFT)), kernel_FFT) # avoid div 0 errors
+kernel = np.fft.ifft2(kernel_FFT, norm= "ortho")
+
+for n, image in tqdm(enumerate(images)):
+    deconvolved = np.array(image, dtype= np.complex128)
+    deconvolved_FFT = np.fft.fft2(deconvolved, axes= (0, 1), norm= "ortho")
+    deconvolved_FFT /= kernel_FFT[:,:,None] # not sure how to correctly normalise this.
+    deconvolved = np.fft.ifft2(deconvolved_FFT, axes= (0, 1), norm= "ortho")
+
+    deconvolved = deconvolved.real
+    if deconvolved.min() <= 0.0: deconvolved -= deconvolved.min()
+    deconvolved *= (2**8 -1) / deconvolved.max()
+    images[n] = deconvolved
+
+print(images.dtype)
+
+fig, axs = plt.subplots(1, 2)
+axs[0].imshow(np.real(kernel))
+axs[1].imshow(np.mean(images[reference_image], axis= 2))
+plt.show()
+
+# %% AVERAGE PHOTOS
 
 shift_and_added = np.zeros((height +y_enlargement, length +x_enlargement, num_channels))
 weights = np.zeros((height +y_enlargement, length +x_enlargement))
@@ -101,41 +139,19 @@ for image, shift in zip(images, shifts):
 shift_and_added /= weights[:,:,None]
 shift_and_added[np.isnan(shift_and_added)] = 0.0
 
-# %% DECOVOLUTION TO MAKE IT SHARPER
-
-softening = 1e-4
-
-xfreq = np.fft.fftfreq(length +x_enlargement, d= 1/(length +x_enlargement))
-yfreq = np.fft.fftfreq(height +y_enlargement, d= 1/(height +y_enlargement))
-xgrid, ygrid = np.meshgrid(xfreq, yfreq)
-
-def gaussian(x, y, sigma):
-    normalisation = 2*np.pi*sigma**2
-    exponent = -1/2 *(x**2 +y**2) *sigma**-2
-    return np.exp(exponent) /normalisation
-
-kernel = gaussian(xgrid, ygrid, sigma= deconvolution)
-kernel_FFT = np.fft.fft2(kernel, norm= "ortho")
-kernel_FFT = np.where(np.abs(kernel_FFT) <= softening, softening, kernel_FFT) # avoid div 0 errors
-kernel = np.fft.ifft2(kernel_FFT, norm= "ortho")
-shift_and_added_FFT = np.fft.fft2(shift_and_added, axes= (0, 1), norm= "ortho")
-deconvolved_FFT = shift_and_added_FFT / kernel_FFT[:,:,None] # not sure how to correctly normalise this.
-deconvolved = np.fft.ifft2(deconvolved_FFT, axes= (0, 1), norm= "ortho")
-deconvolved = np.real(deconvolved)
-
 # %% FORMATTING TO 8 BIT DEPTH
 
-processed = np.copy(deconvolved)
+processed = np.copy(shift_and_added)
 if processed.min() <= 0.0: processed -= processed.min()
 processed *= (2**8 -1) / processed.max()
 
 processed = processed.astype(np.uint8)
 
-img1 = Image.fromarray(processed)
-plt.imshow(img1)
+img2 = Image.fromarray(processed)
+plt.imshow(img2)
 plt.show()
 
 # %%
 
 save_path = os.path.join(save_dir, save_file)
-img1.save(save_path)
+img2.save(save_path)
