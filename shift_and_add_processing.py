@@ -9,14 +9,14 @@ plt.rcParams.update({'figure.figsize': [12.0, 9.0], 'font.size': 24.0,
                      'image.interpolation': 'none', 'figure.facecolor': 'none'})
 
 
-data_dir = r"/home/jamie/Pictures/astrophotos/2026-03-19/jupiter/19h47m25s"
+data_dir = r"/home/jamie/Pictures/astrophotos/2026-06-23/moon/21h58m48s"
 save_dir = r"/home/jamie/Pictures/astrophotos/processed"
-save_file = "Jupiter190326.tiff"
+save_file = "Moon230626.tiff"
 data_files = os.listdir(data_dir)
 reference_image = 0
-tracking_method= "circle" #"circle" #"crosscor" #"peak"
-interpolation= 3.0
-deconvolution= 8.0
+tracking_method= "crosscor" #"circle" #"crosscor" #"peak"
+interpolation= 2.0
+deconvolution= 0.0 # set to 0 to turn off
 
 images = []
 for data_file in data_files: # open all photos. High memory use.
@@ -43,7 +43,7 @@ plt.show()
 images = [cv2.resize(image, None, fx=interpolation, fy=interpolation, interpolation = cv2.INTER_CUBIC)
           for n, image
           in enumerate(images)]
-images = np.array(images)
+images = np.array(images) # consider using dtype= np.float64 but be careful because it uses a lot of memory and doesn't work with cv2.threshold
 
 num_images, height, length, num_channels = images.shape # doesn't work for grayscale in which case it is only dim 3.
 
@@ -52,12 +52,15 @@ num_images, height, length, num_channels = images.shape # doesn't work for grays
 match tracking_method:
     case "peak":
         peaks = [np.unravel_index(np.argmax(image), image.shape) for image in images[:,:,:,0]]
-        
+        peaks = np.array(peaks)
+
     case "crosscor":
         peaks = []
         for image in images[:,:,:,0]:
             correlation = spsig.correlate(image.astype(float), images[reference_image,:,:,0].astype(float), mode="full", method= "fft")
             peaks += [np.unravel_index(np.argmax(correlation), correlation.shape)]
+        peaks = np.array(peaks)
+        print(peaks[reference_image])
     case "circle":
         peaks= np.ndarray(shape= (0,2), dtype= int)
         for image in images[:,:,:,0]:
@@ -65,16 +68,17 @@ match tracking_method:
             # CONSIDER BLURRING THE IMAGE IF IT IS LOOKING AT THE WRONG FEATURE
             threshold, mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY +cv2.THRESH_OTSU) #image, threshold, max, type (int)
             contours, hierarchy = cv2.findContours(mask, 1, 2) #binary image, mode, method
-            contour = contours[-1] # I think the last one refers to the biggest shape.
-            
+            biggest_contour_idx = np.argmax([len(con) for con in contours])
+            contour = contours[biggest_contour_idx] # I think the last one refers to the biggest shape.
+
             def radius_residuals(args):
                 x0, y0 = args
                 r = np.sqrt((contour[:,:,0]-x0)**2 + (contour[:,:,1]-y0)**2)
                 return r.flatten() - r.mean()
             
-            (x,y), cov = spopt.leastsq(radius_residuals, x0= [np.mean(contour[:,:,0]), np.mean(contour[:,:,1])])
+            #(x,y), cov = spopt.leastsq(radius_residuals, x0= [np.mean(contour[:,:,0]), np.mean(contour[:,:,1])])
             
-            #(x,y),radius = cv2.minEnclosingCircle(contour) # THIS IS BETTER FOR CRESCENTS
+            (x,y),radius = cv2.minEnclosingCircle(contour) # THIS IS BETTER FOR CRESCENTS
             
             peaks = np.concatenate((peaks, [[round(y),round(x)]]), axis= 0)
             
@@ -83,7 +87,7 @@ match tracking_method:
             #axs.plot(*contour[:,0,:].T, marker= ".", markersize= 16, color= "tab:red")
             #axs.plot(peaks[:,1], peaks[:,0], marker= "o", markersize= 16, markevery= [-1]) #this line should be approximately straight. If it isn't then you are likely to get ghosting
             #plt.show()
-            
+
 y_enlargement, x_enlargement = np.max(peaks, axis= 0) -np.min(peaks, axis= 0)
 shifts = np.max(peaks, axis= 0) -peaks
 
@@ -95,38 +99,40 @@ plt.show()
 
 # %% DECOVOLUTION TO MAKE IT SHARPER
 
-softening = 1e-4
+if deconvolution > 0:
 
-def gaussian(x, y, sigma): # gaussian as a first assumption. An airy disk is probably worth trying.
-    normalisation = 2*np.pi*sigma**2
-    exponent = -1/2 *(x**2 +y**2) *sigma**-2
-    return np.exp(exponent) /normalisation
+    softening = 1e-4
 
-xfreq = np.fft.fftfreq(length, d= 1/length)
-yfreq = np.fft.fftfreq(height, d= 1/height)
-xgrid, ygrid = np.meshgrid(xfreq, yfreq)
-kernel = gaussian(xgrid, ygrid, sigma= deconvolution)
-kernel_FFT = np.fft.fft2(kernel, norm= "ortho")
-kernel_FFT = np.where(np.abs(kernel_FFT) <= softening, softening *np.exp(1j*np.angle(kernel_FFT)), kernel_FFT) # avoid div 0 errors
-kernel = np.fft.ifft2(kernel_FFT, norm= "ortho")
+    def gaussian(x, y, sigma): # gaussian as a first assumption. An airy disk is probably worth trying.
+        normalisation = 2*np.pi*sigma**2
+        exponent = -1/2 *(x**2 +y**2) *sigma**-2
+        return np.exp(exponent) /normalisation
 
-for n, image in tqdm(enumerate(images)):
-    deconvolved = np.array(image, dtype= np.complex128)
-    deconvolved_FFT = np.fft.fft2(deconvolved, axes= (0, 1), norm= "ortho")
-    deconvolved_FFT /= kernel_FFT[:,:,None] # not sure how to correctly normalise this.
-    deconvolved = np.fft.ifft2(deconvolved_FFT, axes= (0, 1), norm= "ortho")
+    xfreq = np.fft.fftfreq(length, d= 1/length)
+    yfreq = np.fft.fftfreq(height, d= 1/height)
+    xgrid, ygrid = np.meshgrid(xfreq, yfreq)
+    kernel = gaussian(xgrid, ygrid, sigma= deconvolution)
+    kernel_FFT = np.fft.fft2(kernel, norm= "ortho")
+    kernel_FFT = np.where(np.abs(kernel_FFT) <= softening, softening *np.exp(1j*np.angle(kernel_FFT)), kernel_FFT) # avoid div 0 errors
+    kernel = np.fft.ifft2(kernel_FFT, norm= "ortho")
 
-    deconvolved = deconvolved.real
-    if deconvolved.min() <= 0.0: deconvolved -= deconvolved.min()
-    deconvolved *= (2**8 -1) / deconvolved.max()
-    images[n] = deconvolved
+    for n, image in tqdm(enumerate(images)):
+        deconvolved = np.array(image, dtype=np.complex128)
+        deconvolved_FFT = np.fft.fft2(deconvolved, axes= (0, 1), norm= "ortho")
+        deconvolved_FFT /= kernel_FFT[:,:,None] # not sure how to correctly normalise this.
+        deconvolved = np.fft.ifft2(deconvolved_FFT, axes= (0, 1), norm= "ortho")
 
-print(images.dtype)
+        deconvolved = deconvolved.real
+        #if deconvolved.min() <= 0.0: deconvolved -= deconvolved.min()
+        #deconvolved *= (2**8 -1) / deconvolved.max()
+        images[n] = deconvolved # be careful about the type of images. We need to normalise if it is int8. float64 requires a lot of memory
 
-fig, axs = plt.subplots(1, 2)
-axs[0].imshow(np.real(kernel))
-axs[1].imshow(np.mean(images[reference_image], axis= 2))
-plt.show()
+    print(images.dtype)
+
+    fig, axs = plt.subplots(1, 2)
+    axs[0].imshow(np.real(kernel))
+    axs[1].imshow(np.mean(images[reference_image], axis= 2))
+    plt.show()
 
 # %% AVERAGE PHOTOS
 
@@ -136,14 +142,16 @@ for image, shift in zip(images, shifts):
     shift_slice = np.s_[shift[0]:height +shift[0], shift[1]:length +shift[1]]
     weights[shift_slice] += np.ones_like(image[:,:,0])
     shift_and_added[shift_slice] += image
+data_exists = weights > 0
 shift_and_added /= weights[:,:,None]
-shift_and_added[np.isnan(shift_and_added)] = 0.0
+shift_and_added[~data_exists] = 0.0
 
 # %% FORMATTING TO 8 BIT DEPTH
 
 processed = np.copy(shift_and_added)
-if processed.min() <= 0.0: processed -= processed.min()
-processed *= (2**8 -1) / processed.max()
+#print(processed[data_exists].min(), processed[data_exists].max(), processed[data_exists].mean(), np.median(processed[data_exists]))
+if processed.min() <= 0.0: processed -= processed.min() #avoid underflow errors
+processed *= (2**8 -1) / processed.max() # normalise to 255
 
 processed = processed.astype(np.uint8)
 
